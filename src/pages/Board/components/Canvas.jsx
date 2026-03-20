@@ -20,10 +20,18 @@ export default function Canvas() {
                     </marker>
                 </defs>
                 <rect width="100%" height="100%" fill="url(#grid)" id="canvas-grid" />
-                <g id="shapes-layer"></g>
-                <g id="selection-layer"></g>
-                <g id="preview-layer"></g>
+                <g id="viewport">
+                    <g id="board-layer"></g>
+                    <g id="shapes-layer"></g>
+                    <g id="selection-layer"></g>
+                    <g id="preview-layer"></g>
+                </g>
             </svg>
+            <div className="zoom-controls">
+                <div className="zoom-btn" id="btn-zoom-in" title="Zoom in (+)">+</div>
+                <div className="zoom-btn" id="zoom-pct" title="Reset zoom (Ctrl+0)">100%</div>
+                <div className="zoom-btn" id="btn-zoom-out" title="Zoom out (−)">−</div>
+            </div>
         </div>
     );
 }

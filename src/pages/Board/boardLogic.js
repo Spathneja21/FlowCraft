@@ -1,8 +1,12 @@
 /* eslint-disable */
 // FlowCraft Canvas Engine - Pure JS logic, no React dependencies.
 // Called from Board.jsx useEffect after the DOM is mounted.
+import { loadShortcuts, loadZoomSettings } from './shortcutConfig';
 
 export function initBoardLogic(container, boardId, onBack) {
+    /* ── Load persisted shortcuts & zoom settings ── */
+    let shortcuts = loadShortcuts();
+    let zoomCfg = loadZoomSettings();
     const getElementById = (id) => container.querySelector(`#${id}`);
     const querySelectorAll = (sel) => container.querySelectorAll(sel);
 
@@ -11,10 +15,52 @@ export function initBoardLogic(container, boardId, onBack) {
        ════════════════════════════════════════════════════════════ */
 
     const svg = getElementById('canvas');
+    const vpGroup = getElementById('viewport');
+    const boardL = getElementById('board-layer');
     const shapesL = getElementById('shapes-layer');
     const selL = getElementById('selection-layer');
     const prevL = getElementById('preview-layer');
     const textEd = getElementById('text-editor');
+
+    /* ── Board dimensions (canvas-space units) ── */
+    const BOARD_W = 32000;
+    const BOARD_H = 20000;
+
+    /* ── Draw the board boundary rect into board-layer ── */
+    (function initBoardRect() {
+        const ns = 'http://www.w3.org/2000/svg';
+        // Subtle board fill so it stands out from the infinite background
+        const fill = document.createElementNS(ns, 'rect');
+        fill.setAttribute('x', 0); fill.setAttribute('y', 0);
+        fill.setAttribute('width', BOARD_W); fill.setAttribute('height', BOARD_H);
+        fill.setAttribute('fill', '#161a17');
+        fill.setAttribute('pointer-events', 'none');
+        boardL.appendChild(fill);
+        // Glowing border
+        const border = document.createElementNS(ns, 'rect');
+        border.setAttribute('x', 0); border.setAttribute('y', 0);
+        border.setAttribute('width', BOARD_W); border.setAttribute('height', BOARD_H);
+        border.setAttribute('fill', 'none');
+        border.setAttribute('stroke', '#2e4035');
+        border.setAttribute('stroke-width', '2');
+        border.setAttribute('pointer-events', 'none');
+        boardL.appendChild(border);
+        // Corner labels
+        [['4', '14', 'top-left'], [BOARD_W - 4, '14', 'top-right'],
+         ['4', BOARD_H - 4, 'bottom-left'], [BOARD_W - 4, BOARD_H - 4, 'bottom-right']
+        ].forEach(([x, y, label]) => {
+            const t = document.createElementNS(ns, 'text');
+            t.setAttribute('x', x); t.setAttribute('y', y);
+            t.setAttribute('font-family', 'DM Mono, monospace');
+            t.setAttribute('font-size', '11');
+            t.setAttribute('fill', '#2e4035');
+            t.setAttribute('pointer-events', 'none');
+            t.setAttribute('text-anchor',
+                label.includes('right') ? 'end' : 'start');
+            t.textContent = label;
+            boardL.appendChild(t);
+        });
+    })();
 
     /* ── State ── */
     let tool = 'select';
@@ -36,6 +82,9 @@ export function initBoardLogic(container, boardId, onBack) {
     let isDragging = false;
     let dragOffX = 0, dragOffY = 0;
     let dragShapeId = null;
+    let dragMoved = false;
+    let dragStartPt = null;
+    let dragWasSelected = false;
 
     let isResizing = false;
     let resizeHandle = null;
@@ -46,7 +95,7 @@ export function initBoardLogic(container, boardId, onBack) {
     let idCounter = 0;
 
     let vpX = 0, vpY = 0, vpScale = 1;
-    let isPanning = false, panStart = null;
+    let isPanning = false, panStart = null, spaceDown = false;
 
     const HANDLE_R = 5;
 
@@ -117,7 +166,7 @@ export function initBoardLogic(container, boardId, onBack) {
         querySelectorAll('.tool-btn[id^="tool-"]').forEach(b => b.classList.remove('active'));
         const el = getElementById('tool-' + t);
         if (el) el.classList.add('active');
-        svg.style.cursor = t === 'select' ? 'default' : (t === 'text' ? 'text' : 'crosshair');
+        svg.style.cursor = spaceDown ? 'grab' : (t === 'select' ? 'default' : (t === 'text' ? 'text' : 'crosshair'));
         getElementById('status-tool').textContent = 'tool: ' + t;
         deselect();
     }
@@ -140,11 +189,10 @@ export function initBoardLogic(container, boardId, onBack) {
 
     /* ── Coord helpers ── */
     function svgPt(e) {
-        const r = svg.getBoundingClientRect();
-        return {
-            x: (e.clientX - r.left - vpX) / vpScale,
-            y: (e.clientY - r.top - vpY) / vpScale,
-        };
+        const p = svg.createSVGPoint();
+        p.x = e.clientX;
+        p.y = e.clientY;
+        return p.matrixTransform(vpGroup.getScreenCTM().inverse());
     }
 
     /* ── Shape factory ── */
@@ -210,7 +258,7 @@ export function initBoardLogic(container, boardId, onBack) {
         if (!el) return null;
 
         if (!isLine) {
-            el.setAttribute('fill', s.fill === 'none' ? 'none' : s.fill);
+            el.setAttribute('fill', s.fill === 'none' ? 'transparent' : s.fill);
         } else {
             el.setAttribute('fill', 'none');
         }
@@ -222,11 +270,34 @@ export function initBoardLogic(container, boardId, onBack) {
 
         const g = document.createElementNS(ns, 'g');
         g.dataset.id = s.id;
+
+        if (isLine) {
+            const hitEl = el.cloneNode(true);
+            hitEl.setAttribute('stroke', 'transparent');
+            hitEl.setAttribute('stroke-width', '24');
+            hitEl.setAttribute('fill', 'none');
+            hitEl.style.cursor = 'pointer';
+            g.appendChild(hitEl);
+        }
+
         g.appendChild(el);
 
-        if (!isLine && s.text) {
+        if (s.text) {
             textEl = document.createElementNS(ns, 'text');
-            const cx = s.x + s.w / 2, cy = s.y + s.h / 2;
+            let cx, cy;
+            if (isLine) {
+                if (s.type === 'curve') {
+                    const mx = (s.x1 + s.x2) / 2, my = (s.y1 + s.y2) / 2;
+                    cx = (mx + (s.cx || mx)) / 2;
+                    cy = (my + (s.cy || my)) / 2;
+                } else {
+                    cx = (s.x1 + s.x2) / 2;
+                    cy = (s.y1 + s.y2) / 2;
+                }
+            } else {
+                cx = s.x + s.w / 2;
+                cy = s.y + s.h / 2;
+            }
             textEl.setAttribute('x', cx);
             textEl.setAttribute('y', cy);
             textEl.setAttribute('text-anchor', 'middle');
@@ -448,6 +519,7 @@ export function initBoardLogic(container, boardId, onBack) {
             }
         } catch (e) { }
         redraw();
+        fitBoard(); // always open with the board fully in view
     }
 
     /* ── Delete ── */
@@ -502,11 +574,19 @@ export function initBoardLogic(container, boardId, onBack) {
     svg.addEventListener('mousemove', onMouseMove);
     svg.addEventListener('mouseup', onMouseUp);
     svg.addEventListener('dblclick', onDblClick);
-    window.addEventListener('mouseup', () => { isDrawing = false; isDragging = false; isResizing = false; isPanning = false; prevL.innerHTML = ''; });
+    window.addEventListener('mouseup', () => {
+        isDrawing = false; isDragging = false; isResizing = false;
+        if (isPanning) { isPanning = false; svg.style.cursor = spaceDown ? 'grab' : (tool === 'select' ? 'default' : 'crosshair'); }
+        prevL.innerHTML = '';
+    });
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', e => {
+        if (e.key === ' ') { spaceDown = false; if (!isPanning) svg.style.cursor = tool === 'select' ? 'default' : 'crosshair'; }
+    });
 
     function onMouseDown(e) {
-        if (e.button === 1 || e.button === 2) { startPan(e); return; }
+        if (e.button === 1 || e.button === 2) { e.preventDefault(); startPan(e); return; }
+        if (spaceDown) { startPan(e); return; }
         const pt = svgPt(e);
         const handle = e.target.dataset.handle;
         if (handle && e.target.dataset.shapeid) { e.stopPropagation(); startResize(handle, e.target.dataset.shapeid, pt); return; }
@@ -514,8 +594,9 @@ export function initBoardLogic(container, boardId, onBack) {
         if (tool === 'select') {
             if (gEl && shapesL.contains(gEl)) {
                 const id = gEl.dataset.id;
-                if (selectedId !== id) selectShape(id);
-                startDrag(id, pt);
+                const wasSelected = (selectedId === id);
+                if (!wasSelected) selectShape(id);
+                startDrag(id, pt, wasSelected);
             } else { deselect(); startPan(e); }
             return;
         }
@@ -548,7 +629,22 @@ export function initBoardLogic(container, boardId, onBack) {
 
     function onMouseUp(e) {
         if (isPanning) { isPanning = false; return; }
-        if (isDragging) { isDragging = false; autosave(); return; }
+        if (isDragging) { 
+            isDragging = false; 
+            if (dragMoved) {
+                autosave(); 
+            } else if (dragWasSelected && dragShapeId) {
+                // Second click on an already-selected shape → open text editor.
+                // Guard: lines/arrows/curves show a floating textarea (handled
+                // separately in startTextEdit), but for clarity we only trigger
+                // on shapes that have a proper bounding box to anchor the editor.
+                const _s = shapes.find(sh => sh.id === dragShapeId);
+                if (_s && !['line', 'arrow', 'curve'].includes(_s.type)) {
+                    startTextEdit(dragShapeId);
+                }
+            }
+            return; 
+        }
         if (isResizing) { isResizing = false; autosave(); return; }
         if (isDrawing && drawStart) {
             const pt = svgPt(e);
@@ -560,36 +656,73 @@ export function initBoardLogic(container, boardId, onBack) {
     }
 
     function onDblClick(e) {
+        if (isPanning) { isPanning = false; svg.style.cursor = 'default'; }
         const gEl = e.target.closest('g[data-id]');
-        if (gEl && shapesL.contains(gEl)) { startTextEdit(gEl.dataset.id); }
+        if (gEl && shapesL.contains(gEl)) { 
+            startTextEdit(gEl.dataset.id); 
+        } else {
+            const pt = svgPt(e);
+            saveUndo();
+            const activeType = tool === 'select' ? 'rect' : tool;
+            
+            let s;
+            if (activeType === 'text') {
+                s = defaultShape('text', pt.x - 60, pt.y - 20, 120, 40);
+                s.fill = 'none'; s.stroke = 'none';
+            } else {
+                s = defaultShape(activeType, pt.x - 50, pt.y - 30, 100, 60);
+            }
+            
+            shapes.push(s);
+            redraw(); 
+            autosave();
+            selectShape(s.id);
+            startTextEdit(s.id);
+        }
     }
 
     function startPan(e) { isPanning = true; panStart = { x: e.clientX - vpX, y: e.clientY - vpY }; svg.style.cursor = 'grab'; }
     function doPan(e) {
         if (!isPanning || !panStart) return;
         vpX = e.clientX - panStart.x; vpY = e.clientY - panStart.y;
-        shapesL.setAttribute('transform', `translate(${vpX},${vpY}) scale(${vpScale})`);
-        selL.setAttribute('transform', `translate(${vpX},${vpY}) scale(${vpScale})`);
-        prevL.setAttribute('transform', `translate(${vpX},${vpY}) scale(${vpScale})`);
+        applyViewport();
     }
 
     svg.addEventListener('wheel', e => {
+        const isCtrl = e.ctrlKey || e.metaKey;
         e.preventDefault();
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        const pt = svgPt(e);
-        vpScale = Math.min(4, Math.max(0.2, vpScale * delta));
-        vpX = e.clientX - (pt.x) * vpScale;
-        vpY = e.clientY - (pt.y) * vpScale;
-        shapesL.setAttribute('transform', `translate(${vpX},${vpY}) scale(${vpScale})`);
-        selL.setAttribute('transform', `translate(${vpX},${vpY}) scale(${vpScale})`);
-        prevL.setAttribute('transform', `translate(${vpX},${vpY}) scale(${vpScale})`);
-        getElementById('status-zoom').textContent = 'zoom: ' + Math.round(vpScale * 100) + '%';
+
+        if (isCtrl) {
+            /* ── Pinch-to-zoom (trackpad) or Ctrl+scroll (mouse) ── */
+            if (!zoomCfg.scrollZoom) return;
+            // Use a small fixed sensitivity so pinch doesn't feel rocket-fast.
+            // zoomSensitivity slider scales within a gentle range (0.003 – 0.008).
+            const baseSens = 0.003;
+            const sensitivity = baseSens * (zoomCfg.zoomSensitivity || 1.0);
+            const delta = 1 - e.deltaY * sensitivity;
+
+            const pt = svgPt(e); // exact world point using CTM
+            const ns = Math.min(4, Math.max(0.08, vpScale * delta));
+            const r = svg.getBoundingClientRect();
+
+            vpX = (e.clientX - r.left) - pt.x * ns;
+            vpY = (e.clientY - r.top) - pt.y * ns;
+            vpScale = ns;
+        } else {
+            /* ── Two-finger scroll → pan ── */
+            if (!zoomCfg.trackpadZoom) return;
+            vpX -= e.deltaX;
+            vpY -= e.deltaY;
+        }
+
+        applyViewport();
     }, { passive: false });
 
-    function startDrag(id, pt) {
-        const s = shapes.find(sh => sh.id === selectedId);
+    function startDrag(id, pt, wasSelected) {
+        const s = shapes.find(sh => sh.id === id);
         if (!s) return;
         isDragging = true; dragShapeId = id;
+        dragMoved = false; dragStartPt = pt; dragWasSelected = !!wasSelected;
         if (['line', 'arrow', 'curve'].includes(s.type)) {
             dragOffX = pt.x - s.x1; dragOffY = pt.y - s.y1;
         } else {
@@ -600,7 +733,16 @@ export function initBoardLogic(container, boardId, onBack) {
     function doDrag(pt) {
         const s = shapes.find(sh => sh.id === dragShapeId);
         if (!s) return;
-        saveUndo();
+        
+        if (!dragMoved && dragStartPt) {
+            if (Math.abs(pt.x - dragStartPt.x) > 3 || Math.abs(pt.y - dragStartPt.y) > 3) {
+                dragMoved = true;
+                saveUndo();
+            } else {
+                return;
+            }
+        }
+        
         if (['line', 'arrow', 'curve'].includes(s.type)) {
             const dx = pt.x - dragOffX - s.x1, dy = pt.y - dragOffY - s.y1;
             s.x1 += dx; s.y1 += dy; s.x2 += dx; s.y2 += dy;
@@ -616,6 +758,7 @@ export function initBoardLogic(container, boardId, onBack) {
         isResizing = true; resizeHandle = handle;
         const s = shapes.find(sh => sh.id === selectedId);
         if (!s) { isResizing = false; return; }
+        saveUndo();
         selectShape(id);
         resizeStart = { mx: pt.x, my: pt.y, x: s.x, y: s.y, w: s.w, h: s.h };
     }
@@ -669,7 +812,7 @@ export function initBoardLogic(container, boardId, onBack) {
             el.setAttribute('d', `M${start.x},${start.y} Q${mx},${my} ${cur.x},${cur.y}`);
         }
         if (!el) return;
-        el.setAttribute('fill', ['line', 'arrow', 'curve'].includes(tool) ? 'none' : (fillColor === 'none' ? 'none' : fillColor));
+        el.setAttribute('fill', ['line', 'arrow', 'curve'].includes(tool) ? 'none' : (fillColor === 'none' ? 'transparent' : fillColor));
         el.setAttribute('stroke', strokeColor);
         el.setAttribute('stroke-width', strokeWidth);
         el.setAttribute('opacity', '0.6');
@@ -685,6 +828,15 @@ export function initBoardLogic(container, boardId, onBack) {
         if (['line', 'arrow', 'curve'].includes(tool)) {
             s.x1 = start.x; s.y1 = start.y; s.x2 = end.x; s.y2 = end.y;
             if (tool === 'curve') { s.cx = (start.x + end.x) / 2; s.cy = (start.y + end.y) / 2 - Math.abs(end.x - start.x) * 0.3; }
+            /* Clamp line endpoints onto the board */
+            s.x1 = Math.max(0, Math.min(BOARD_W, s.x1));
+            s.y1 = Math.max(0, Math.min(BOARD_H, s.y1));
+            s.x2 = Math.max(0, Math.min(BOARD_W, s.x2));
+            s.y2 = Math.max(0, Math.min(BOARD_H, s.y2));
+        } else {
+            /* Clamp box-like shapes so they land fully inside the board */
+            s.x = Math.max(0, Math.min(BOARD_W - s.w, s.x));
+            s.y = Math.max(0, Math.min(BOARD_H - s.h, s.y));
         }
         shapes.push(s);
         redraw();
@@ -694,16 +846,41 @@ export function initBoardLogic(container, boardId, onBack) {
     }
 
     function startTextEdit(id) {
-        const s = shapes.find(sh => sh.id === selectedId);
-        if (!s || ['line', 'arrow', 'curve'].includes(s.type)) return;
-        editingId = id;
-        commitTextEdit();
-        editingId = id;
+        const s = shapes.find(sh => sh.id === id);
+        if (!s) return;
+        // Commit any currently open edit BEFORE touching editingId.
+        // Old order was: set editingId → commitTextEdit() → set editingId again.
+        // commitTextEdit() reads editingId, so calling it first was saving the
+        // NEW shape's (empty) textarea value over the old shape, then blanking
+        // the textarea — leaving the editor open but broken.
+        commitTextEdit();  // close previous editor safely (editingId is still the old one)
+        editingId = id;    // now point to the new shape
         const r = svg.getBoundingClientRect();
-        const sx = s.x * vpScale + vpX + r.left;
-        const sy = s.y * vpScale + vpY + r.top;
-        const sw = s.w * vpScale;
-        const sh = s.h * vpScale;
+        
+        let cx, cy, w, h;
+        if (['line', 'arrow', 'curve'].includes(s.type)) {
+            if (s.type === 'curve') {
+                const mx = (s.x1 + s.x2) / 2, my = (s.y1 + s.y2) / 2;
+                cx = (mx + (s.cx || mx)) / 2;
+                cy = (my + (s.cy || my)) / 2;
+            } else {
+                cx = (s.x1 + s.x2) / 2;
+                cy = (s.y1 + s.y2) / 2;
+            }
+            w = 240; 
+            const numLines = (s.text || '').split('\n').length || 1;
+            h = Math.max(34, numLines * (s.fontSize || 14) * 1.5 + 10);
+        } else {
+            cx = s.x + s.w / 2;
+            cy = s.y + s.h / 2;
+            w = s.w; h = s.h;
+        }
+        
+        const sx = (cx - w / 2) * vpScale + vpX + r.left;
+        const sy = (cy - h / 2) * vpScale + vpY + r.top;
+        const sw = w * vpScale;
+        const sh = h * vpScale;
+        
         textEd.style.display = 'block';
         textEd.style.left = sx + 'px';
         textEd.style.top = sy + 'px';
@@ -717,13 +894,43 @@ export function initBoardLogic(container, boardId, onBack) {
         textEd.select();
     }
 
+    // Flag to prevent blur from double-firing commitTextEdit when
+    // Enter already committed. Without this flag the sequence is:
+    //   Enter → commitTextEdit() → hides textarea → textarea.blur fires
+    //   → commitTextEdit() called again → focus returns to canvas
+    //   → mousedown fires on canvas → startDrag(wasSelected=true)
+    //   → mouseup fires → startTextEdit() called again → editor reopens
+    // Setting this flag in the keydown handler lets the blur listener
+    // bail out early so the above chain never starts.
+    let committingViaKey = false;
+
     textEd.addEventListener('input', () => {
         if (!editingId) return;
         const s = shapes.find(sh => sh.id === editingId);
         if (s) { s.text = textEd.value; redraw(); autosave(); }
     });
-    textEd.addEventListener('blur', () => { commitTextEdit(); });
-    textEd.addEventListener('keydown', e => { if (e.key === 'Escape') { commitTextEdit(); } });
+
+    textEd.addEventListener('blur', () => {
+        if (committingViaKey) return;   // Enter/Escape already handled it
+        commitTextEdit();
+    });
+
+    textEd.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            committingViaKey = true;
+            commitTextEdit();
+            committingViaKey = false;
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();   // stop canvas mousedown from seeing this event
+            committingViaKey = true;
+            commitTextEdit();
+            committingViaKey = false;
+        }
+    });
 
     function commitTextEdit() {
         if (!editingId) return;
@@ -734,17 +941,58 @@ export function initBoardLogic(container, boardId, onBack) {
         textEd.value = '';
     }
 
+    function buildShortcutString(e) {
+        const parts = [];
+        if (e.ctrlKey || e.metaKey) parts.push('ctrl');
+        if (e.shiftKey) parts.push('shift');
+        if (e.altKey) parts.push('alt');
+        if (!['Control', 'Meta', 'Shift', 'Alt'].includes(e.key)) parts.push(e.key);
+        return parts.join('+');
+    }
+
     function onKeyDown(e) {
         if (e.target === textEd || e.target === getElementById('board-title') || e.target.tagName === 'INPUT') return;
-        if (e.ctrlKey || e.metaKey) {
-            if (e.key === 'z') { e.preventDefault(); undo(); }
-            if (e.key === 'y') { e.preventDefault(); redo(); }
-            return;
-        }
-        const map = { v: 'select', r: 'rect', d: 'diamond', e: 'ellipse', p: 'parallelogram', l: 'line', a: 'arrow', c: 'curve', t: 'text' };
-        if (map[e.key]) setTool(map[e.key]);
-        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) deleteSelected();
-        if (e.key === 'Escape') { deselect(); commitTextEdit(); }
+        if (e.key === ' ' && !spaceDown) { e.preventDefault(); spaceDown = true; svg.style.cursor = 'grab'; return; }
+        const combo = buildShortcutString(e);
+        // Reverse-lookup action from current shortcut map
+        const action = Object.entries(shortcuts).find(([, v]) => v.toLowerCase() === combo.toLowerCase())?.[0];
+        if (!action) return;
+        e.preventDefault();
+        const toolActions = ['select', 'rect', 'diamond', 'ellipse', 'parallelogram', 'line', 'arrow', 'curve', 'text'];
+        if (toolActions.includes(action)) { setTool(action); return; }
+        if (action === 'undo') { undo(); return; }
+        if (action === 'redo') { redo(); return; }
+        if (action === 'delete' && selectedId) { deleteSelected(); return; }
+        if (action === 'escape') { deselect(); commitTextEdit(); return; }
+        if (action === 'zoomIn') { applyZoomStep(1.1); return; }
+        if (action === 'zoomOut') { applyZoomStep(0.9); return; }
+        if (action === 'zoomReset') { vpScale = 1; vpX = 0; vpY = 0; applyViewport(); return; }
+    }
+
+    function applyZoomStep(delta) {
+        const cx = svg.clientWidth / 2, cy = svg.clientHeight / 2;
+        const pt = { x: (cx - vpX) / vpScale, y: (cy - vpY) / vpScale };
+        vpScale = Math.min(4, Math.max(0.08, vpScale * delta));
+        vpX = cx - pt.x * vpScale;
+        vpY = cy - pt.y * vpScale;
+        applyViewport();
+    }
+
+    function fitBoard() {
+        const vw = svg.clientWidth;
+        const vh = svg.clientHeight;
+        vpScale = Math.min(vw / BOARD_W, vh / BOARD_H) * 0.92;
+        vpX = (vw - BOARD_W * vpScale) / 2;
+        vpY = (vh - BOARD_H * vpScale) / 2;
+        applyViewport();
+    }
+
+    function applyViewport() {
+        const t = `translate(${vpX},${vpY}) scale(${vpScale})`;
+        vpGroup.setAttribute('transform', t);
+        const pct = Math.round(vpScale * 100) + '%';
+        getElementById('status-zoom').textContent = 'zoom: ' + pct;
+        getElementById('zoom-pct').textContent = pct;
     }
 
     /* ── Attach toolbar button listeners ── */
@@ -754,8 +1002,12 @@ export function initBoardLogic(container, boardId, onBack) {
     };
     bind('tool-undo', 'click', undo);
     bind('tool-redo', 'click', redo);
+    bind('tool-fit', 'click', fitBoard);
     bind('tool-clear', 'click', clearCanvas);
     bind('tool-export', 'click', exportSVG);
+    bind('btn-zoom-in', 'click', () => applyZoomStep(1.25));
+    bind('btn-zoom-out', 'click', () => applyZoomStep(0.8));
+    bind('zoom-pct', 'click', () => { vpScale = 1; vpX = 0; vpY = 0; applyViewport(); });
     ['select', 'rect', 'diamond', 'ellipse', 'parallelogram', 'line', 'arrow', 'curve', 'text'].forEach(t => {
         bind('tool-' + t, 'click', () => setTool(t));
     });
@@ -777,7 +1029,22 @@ export function initBoardLogic(container, boardId, onBack) {
 
     getElementById('board-title').addEventListener('input', autosave);
 
+    /* ── Custom event listeners ── */
+    const onSetTool = (e) => setTool(e.detail.tool);
+    const onShortcutsUpd = (e) => { shortcuts = e.detail.bindings; };
+    const onZoomSettingsUpd = (e) => { zoomCfg = e.detail; };
+
+    document.addEventListener('fc:settool', onSetTool);
+    document.addEventListener('fc:shortcuts-updated', onShortcutsUpd);
+    document.addEventListener('fc:zoom-settings-updated', onZoomSettingsUpd);
+
     /* ── Init ── */
     loadBoard();
     getElementById('saved-badge').style.opacity = '0.6';
+
+    return () => {
+        document.removeEventListener('fc:settool', onSetTool);
+        document.removeEventListener('fc:shortcuts-updated', onShortcutsUpd);
+        document.removeEventListener('fc:zoom-settings-updated', onZoomSettingsUpd);
+    };
 }

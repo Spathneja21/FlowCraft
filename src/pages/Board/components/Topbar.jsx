@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function Topbar({ onBack }) {
+export default function Topbar({ onBack, onOpenShortcuts }) {
     return (
         <header className="topbar">
             <div className="topbar-left">
@@ -25,8 +25,10 @@ export default function Topbar({ onBack }) {
             <div className="topbar-right">
                 <button className="btn-top" id="tool-undo" title="Undo (Ctrl+Z)">↩ undo</button>
                 <button className="btn-top" id="tool-redo" title="Redo (Ctrl+Y)">↪ redo</button>
+                <button className="btn-top" id="tool-fit" title="Fit board in view (Home)">⊡ fit</button>
                 <button className="btn-top" id="tool-clear" title="Clear all">clear</button>
                 <button className="btn-top primary" id="tool-export">export svg</button>
+                <button className="btn-top" onClick={onOpenShortcuts} title="Customize keyboard shortcuts">⌨ keys</button>
             </div>
         </header>
     );

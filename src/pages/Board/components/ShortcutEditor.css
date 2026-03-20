@@ -1,0 +1,367 @@
+/* ShortcutEditor.css */
+
+/* ── Overlay ── */
+.sc-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: sc-fadein .15s ease;
+}
+
+@keyframes sc-fadein {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+/* ── Modal box ── */
+.sc-modal {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    width: 480px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, .8);
+    animation: sc-slidein .18s cubic-bezier(.22, 1, .36, 1);
+    overflow: hidden;
+}
+
+@keyframes sc-slidein {
+    from {
+        opacity: 0;
+        transform: translateY(-12px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.sc-header {
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.sc-title {
+    font-family: var(--display);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+}
+
+.sc-title span {
+    color: var(--accent);
+}
+
+.sc-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text3);
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 2px;
+    transition: color .12s;
+}
+
+.sc-close:hover {
+    color: var(--text);
+}
+
+/* ── Tabs ── */
+.sc-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+}
+
+.sc-tab {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .08em;
+    color: var(--text3);
+    padding: 10px 14px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color .12s, border-color .12s;
+}
+
+.sc-tab:hover {
+    color: var(--text2);
+}
+
+.sc-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+/* ── Body (scrollable) ── */
+.sc-body {
+    overflow-y: auto;
+    flex: 1;
+    padding: 12px 20px;
+}
+
+/* ── Key bindings tab ── */
+.sc-group-label {
+    font-size: 9px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin: 14px 0 6px;
+}
+
+.sc-group-label:first-child {
+    margin-top: 0;
+}
+
+.sc-row {
+    display: flex;
+    align-items: center;
+    padding: 7px 10px;
+    border-radius: 3px;
+    transition: background .1s;
+    gap: 12px;
+}
+
+.sc-row:hover {
+    background: var(--bg3);
+}
+
+.sc-row-label {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text2);
+}
+
+.sc-key {
+    min-width: 56px;
+    padding: 4px 10px;
+    text-align: center;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color .12s, background .12s;
+    white-space: nowrap;
+}
+
+.sc-key:hover {
+    border-color: var(--accent);
+}
+
+.sc-key.recording {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+    color: var(--accent);
+    animation: sc-pulse 1s infinite;
+}
+
+@keyframes sc-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: .5;
+    }
+}
+
+.sc-key.conflict {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+.sc-conflict-hint {
+    font-size: 10px;
+    color: var(--red);
+    min-width: 80px;
+    text-align: right;
+}
+
+/* ── Zoom settings tab ── */
+.sc-zoom-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.sc-zoom-row:last-child {
+    border-bottom: none;
+}
+
+.sc-zoom-desc {
+    flex: 1;
+}
+
+.sc-zoom-desc strong {
+    font-size: 12px;
+    color: var(--text);
+    display: block;
+}
+
+.sc-zoom-desc small {
+    font-size: 10px;
+    color: var(--text3);
+    margin-top: 2px;
+    display: block;
+}
+
+/* Toggle */
+.sc-toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.sc-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.sc-toggle-track {
+    position: absolute;
+    inset: 0;
+    border-radius: 20px;
+    background: var(--border2);
+    cursor: pointer;
+    transition: background .2s;
+}
+
+.sc-toggle input:checked+.sc-toggle-track {
+    background: var(--accent);
+}
+
+.sc-toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text);
+    transition: transform .2s;
+}
+
+.sc-toggle input:checked+.sc-toggle-track::after {
+    transform: translateX(16px);
+}
+
+/* Slider */
+.sc-slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sc-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 120px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border2);
+    outline: none;
+    cursor: pointer;
+}
+
+.sc-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+}
+
+.sc-slider-val {
+    font-size: 11px;
+    color: var(--text2);
+    width: 30px;
+}
+
+/* ── Footer ── */
+.sc-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+}
+
+.sc-footer-spacer {
+    flex: 1;
+}
+
+.sc-btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    padding: 6px 16px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+}
+
+.sc-btn-cancel {
+    background: none;
+    border: 1px solid var(--border2);
+    color: var(--text2);
+}
+
+.sc-btn-cancel:hover {
+    border-color: var(--border3);
+    color: var(--text);
+}
+
+.sc-btn-reset {
+    background: none;
+    border: 1px solid var(--red);
+    color: var(--red);
+}
+
+.sc-btn-reset:hover {
+    background: var(--red-bg);
+}
+
+.sc-btn-save {
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: #050e08;
+    font-weight: 600;
+}
+
+.sc-btn-save:hover {
+    background: var(--accent2);
+}

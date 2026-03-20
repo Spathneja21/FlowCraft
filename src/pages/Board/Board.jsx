@@ -1,5 +1,5 @@
 /* eslint-disable */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import './Board.css';
@@ -10,24 +10,29 @@ import Toolbar from './components/Toolbar';
 import PropertiesPanel from './components/PropertiesPanel';
 import Canvas from './components/Canvas';
 import StatusBar from './components/StatusBar';
+import ShortcutEditor from './components/ShortcutEditor';
 
 export default function Board() {
   const { boardId } = useParams();
   const navigate = useNavigate();
   const onBack = () => navigate('/workspace');
   const containerRef = useRef(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   useEffect(() => {
     if (containerRef.current) {
-      initBoardLogic(containerRef.current, boardId, onBack);
+      const cleanup = initBoardLogic(containerRef.current, boardId, onBack);
+      return cleanup;
     }
-    // Note: cleanup not needed — engine only adds listeners scoped to this container
   }, [boardId]);
 
   return (
     <div className="board-root" ref={containerRef}>
 
-      <Topbar onBack={onBack} />
+      <Topbar
+        onBack={onBack}
+        onOpenShortcuts={() => setShowShortcuts(true)}
+      />
 
       <Toolbar />
 
@@ -45,6 +50,11 @@ export default function Board() {
 
       {/* Tooltip */}
       <div className="tooltip" id="tooltip"></div>
+
+      {/* Keyboard Shortcut Editor Modal */}
+      {showShortcuts && (
+        <ShortcutEditor onClose={() => setShowShortcuts(false)} />
+      )}
 
     </div>
   );
